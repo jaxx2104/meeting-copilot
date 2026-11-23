@@ -1,6 +1,6 @@
 # Meeting Copilot
 
-A macOS app that listens to a meeting through the microphone and shows, in an always-on-top window:
+A macOS app that listens to a meeting through the microphone, optionally reads a shared screen, and shows:
 
 - a live transcript
 - supplementary notes on terms and concepts that come up in the conversation
@@ -11,9 +11,10 @@ Everything runs locally on the Mac. No network is used at runtime.
 | Stage | Implementation |
 | --- | --- |
 | Audio | `AVAudioEngine` mic input, 16 kHz mono, energy-based VAD chunking |
+| Screen (optional) | `SCContentSharingPicker` to pick one window or display, `SCScreenshotManager` + Vision OCR each analysis tick |
 | Speech-to-text | [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift) (CoreML, default `large-v3-v20240930_626MB`) |
 | Notes / questions | Apple Foundation Models (on-device), or Ollama on `127.0.0.1` |
-| UI | SwiftUI, floating window |
+| UI | SwiftUI window, pin button toggles always-on-top |
 
 ## Requirements
 
@@ -42,11 +43,21 @@ ollama pull qwen3:8b
 
 Then pick "Ollama" in the LLM menu and enter the model name.
 
+## Reading the screen
+
+Click "画面" and pick the window or display showing the shared slides. Its text is OCR'd on-device and passed to the LLM together with the transcript; a new analysis also runs when the screen content changes. Only the picked window or display is read.
+
 ## Self-test without a microphone
 
 ```sh
 say -v Kyoko -o /tmp/sample.aiff "今日は RAG の PoC について話します"
 .build/debug/MeetingCopilot --selftest /tmp/sample.aiff
+```
+
+OCR on a single image:
+
+```sh
+.build/debug/MeetingCopilot --ocr /path/to/slide.png
 ```
 
 ## Notes

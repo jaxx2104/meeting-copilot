@@ -27,6 +27,15 @@ struct ContentView: View {
             .tint(model.isRunning ? .red : .accentColor)
             .buttonStyle(.borderedProminent)
 
+            Button(action: model.toggleScreen) {
+                Label("画面", systemImage: model.screenSelected ? "rectangle.inset.filled.on.rectangle" : "rectangle.on.rectangle")
+            }
+            .tint(model.screenSelected ? .accentColor : nil)
+            .buttonStyle(.bordered)
+            .help(model.screenSelected
+                  ? (model.screenText.isEmpty ? "画面を読み取り中（クリックで停止）" : "読み取った内容:\n" + model.screenText.prefix(400))
+                  : "共有画面やスライドを選んで、分析に使う")
+
             LevelMeter(level: model.level).frame(width: 60, height: 8)
 
             Text(model.status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -46,8 +55,13 @@ struct ContentView: View {
             if model.backend == .ollama {
                 TextField("model", text: $model.ollamaModel).frame(width: 110)
             }
-            Button("今すぐ分析", action: model.analyzeNow).disabled(model.isAnalyzing || model.lines.isEmpty)
+            Button("今すぐ分析", action: model.analyzeNow)
+                .disabled(model.isAnalyzing || (model.lines.isEmpty && !model.screenSelected))
             Button("クリア", action: model.clear)
+            Button { model.pinned.toggle() } label: {
+                Image(systemName: model.pinned ? "pin.fill" : "pin")
+            }
+            .help(model.pinned ? "前面固定を解除" : "常に前面に表示")
         }
         .padding(10)
     }

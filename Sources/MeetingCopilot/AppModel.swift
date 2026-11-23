@@ -1,4 +1,5 @@
 import AVFoundation
+import AppKit
 import Foundation
 import Observation
 
@@ -21,6 +22,13 @@ final class AppModel {
     var backend: LLMBackend = .apple
     var ollamaModel = UserDefaults.standard.string(forKey: "ollamaModel") ?? "qwen3:8b"
     var analyzeIntervalSeconds: Double = 20
+    /// Keeps the window above other apps. Off by default so it doesn't cover the meeting app.
+    var pinned = UserDefaults.standard.bool(forKey: "pinned") {
+        didSet {
+            UserDefaults.standard.set(pinned, forKey: "pinned")
+            applyPin()
+        }
+    }
 
     // State
     var isRunning = false
@@ -31,12 +39,31 @@ final class AppModel {
     var lines: [TranscriptLine] = []
     var supplements: [SupplementItem] = []
     var questions: [QuestionItem] = []
+    var screenSelected = false
+    var screenText = ""
 
     private let capture = AudioCapture()
     private var transcriber: Transcriber?
     private var chunks: AsyncStream<[Float]>.Continuation?
     private var workers: [Task<Void, Never>] = []
     private var analyzedUpTo = 0
+    private var analyzedScreen = ""
+    private let screen = ScreenReader()
+
+    init() {
+        screen.onChange = { [weak self] in
+            guard let self else { return }
+            screenSelected = screen.filter != nil
+            if !screenSelected { screenText = ""; analyzedScreen = "" }
+            if let e = screen.lastError { status = "画面の選択に失敗: \(e)" }
+        }
+    }
+
+    func applyPin() {
+        for w in NSApplication.shared.windows where w.isVisible { w.level = pinned ? .floating : .normal }
+    }
+
+    func toggleScreen() { screenSelected ? screen.stop() : screen.present() }
 
     func toggle() { isRunning ? stop() : start() }
 
@@ -62,7 +89,7 @@ final class AppModel {
     }
 
     func clear() {
-        lines = []; supplements = []; questions = []; analyzedUpTo = 0
+        lines = []; supplements = []; questions = []; analyzedUpTo = 0; analyzedScreen = ""
     }
 
     private func run() async {
@@ -115,21 +142,31 @@ final class AppModel {
     func analyzeNow() { Task { await analyzeIfNeeded(force: true) } }
 
     private func analyzeIfNeeded(force: Bool = false) async {
-        guard !isAnalyzing, analyzedUpTo < lines.count else { return }
+        guard !isAnalyzing else { return }
+        isAnalyzing = true
+        defer { isAnalyzing = false }
+
+        // One capture per analysis tick; a separate timer would OCR frames nobody analyzes.
+        if screenSelected {
+            do { screenText = try await screen.readText() ?? "" } catch { status = "画面取得エラー: \(error.localizedDescription)" }
+        }
         let newText = lines[analyzedUpTo...].map(\.text).joined()
-        guard force || newText.count >= 40 else { return }
+        let screenChanged = ScreenReader.changed(screenText, from: analyzedScreen)
+        guard !lines.isEmpty || !screenText.isEmpty else { return }
+        guard force || newText.count >= 40 || screenChanged else { return }
 
         // Recent context, bounded for the on-device model's ~4k token window.
         let recent = String(lines.map(\.text).joined(separator: "\n").suffix(1500))
+        let screenSnapshot = screenText
         let shown = (supplements.suffix(10).map(\.term) + questions.suffix(5).map(\.text))
         let upTo = lines.count
 
-        isAnalyzing = true
-        defer { isAnalyzing = false }
         let provider: InsightProvider = backend == .apple ? AppleIntelligenceProvider() : OllamaProvider(model: ollamaModel)
         do {
-            let result = try await provider.analyze(transcript: recent, alreadyShown: shown)
+            let result = try await provider.analyze(
+                transcript: recent, screen: String(screenSnapshot.prefix(800)), alreadyShown: shown)
             analyzedUpTo = upTo
+            analyzedScreen = screenSnapshot
             let known = Set(supplements.map { $0.term.lowercased() })
             for s in result.supplements where !known.contains(s.term.lowercased()) {
                 supplements.insert(SupplementItem(time: .now, term: s.term, explanation: s.explanation), at: 0)

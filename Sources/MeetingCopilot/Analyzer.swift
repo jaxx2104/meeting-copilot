@@ -28,7 +28,7 @@ struct Insights: Codable, Sendable {
 }
 
 protocol InsightProvider: Sendable {
-    func analyze(transcript: String, alreadyShown: [String]) async throws -> Insights
+    func analyze(transcript: String, screen: String, alreadyShown: [String]) async throws -> Insights
 }
 
 enum Prompt {
@@ -36,11 +36,15 @@ enum Prompt {
     あなたは会議に同席しているアシスタントです。文字起こしされた会話を読み、次の2つを日本語で出してください。
     - supplements: 会話に出てきた専門用語・略語・固有名詞・前提知識の補足。一般常識レベルの語は不要
     - questions: 聞き手が今発言すると議論が前に進む質問（曖昧な点の確認、根拠・数値・期限・担当の確認、リスクの指摘など）
-    文字起こしには誤認識が含まれることがあります。会話に根拠がない内容は作らないでください。該当がなければ空配列にしてください。
+    画面に映っている資料やスライドの文字（OCR）が付くことがあります。会話と合わせて読み、画面にだけ出てくる用語も補足の対象にしてください。
+    文字起こしと OCR には誤認識が含まれることがあります。会話や画面に根拠がない内容は作らないでください。該当がなければ空配列にしてください。
     """
 
-    static func user(transcript: String, alreadyShown: [String]) -> String {
+    static func user(transcript: String, screen: String, alreadyShown: [String]) -> String {
         var s = "## 直近の会話\n\(transcript)\n"
+        if !screen.isEmpty {
+            s += "\n## 画面に映っている内容（OCR）\n\(screen)\n"
+        }
         if !alreadyShown.isEmpty {
             s += "\n## すでに表示済み（重複させない）\n" + alreadyShown.map { "- \($0)" }.joined(separator: "\n")
         }
@@ -58,8 +62,8 @@ struct AppleIntelligenceProvider: InsightProvider {
         }
     }
 
-    func analyze(transcript: String, alreadyShown: [String]) async throws -> Insights {
-        let prompt = Prompt.user(transcript: transcript, alreadyShown: alreadyShown)
+    func analyze(transcript: String, screen: String, alreadyShown: [String]) async throws -> Insights {
+        let prompt = Prompt.user(transcript: transcript, screen: screen, alreadyShown: alreadyShown)
         // Two small requests instead of one nested schema: the on-device model sometimes breaks
         // out of a string mid-object, and splitting keeps one failure from losing both lists.
         async let supplementsJSON = Self.generate(prompt: prompt, schema: Self.supplementsSchema())
@@ -151,7 +155,7 @@ struct OllamaProvider: InsightProvider {
         "required": ["supplements", "questions"],
     ]
 
-    func analyze(transcript: String, alreadyShown: [String]) async throws -> Insights {
+    func analyze(transcript: String, screen: String, alreadyShown: [String]) async throws -> Insights {
         let body: [String: Any] = [
             "model": model,
             "stream": false,
@@ -160,7 +164,7 @@ struct OllamaProvider: InsightProvider {
             "options": ["temperature": 0.3],
             "messages": [
                 ["role": "system", "content": Prompt.instructions],
-                ["role": "user", "content": Prompt.user(transcript: transcript, alreadyShown: alreadyShown)],
+                ["role": "user", "content": Prompt.user(transcript: transcript, screen: screen, alreadyShown: alreadyShown)],
             ],
         ]
         var req = URLRequest(url: endpoint)

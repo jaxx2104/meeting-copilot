@@ -1,10 +1,22 @@
 import AVFoundation
 import Foundation
+import ImageIO
 
 /// `MeetingCopilot --selftest <audio-file>`: runs the transcribe -> analyze pipeline on a file and prints results.
 enum SelfTest {
     static func runIfRequested() {
         let args = CommandLine.arguments
+        // `--ocr <image-file>`: prints what the screen reader would pass to the LLM for that image.
+        if let i = args.firstIndex(of: "--ocr"), i + 1 < args.count {
+            let url = URL(fileURLWithPath: args[i + 1]) as CFURL
+            guard let src = CGImageSourceCreateWithURL(url, nil), let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+                print("cannot read image"); exit(1)
+            }
+            Task.detached {
+                do { print(try await ScreenReader.recognizeText(in: image)); exit(0) } catch { print("ocr failed: \(error)"); exit(1) }
+            }
+            return
+        }
         guard let i = args.firstIndex(of: "--selftest"), i + 1 < args.count else { return }
         let path = args[i + 1]
         let model = ProcessInfo.processInfo.environment["WHISPER_MODEL"] ?? "large-v3-v20240930_626MB"
@@ -29,7 +41,7 @@ enum SelfTest {
                 print("transcribe: \(String(format: "%.1f", Date().timeIntervalSince(t0)))s")
                 if let msg = AppleIntelligenceProvider.availabilityMessage { print(msg) }
                 let t1 = Date()
-                let r = try await AppleIntelligenceProvider().analyze(transcript: texts.joined(separator: "\n"), alreadyShown: [])
+                let r = try await AppleIntelligenceProvider().analyze(transcript: texts.joined(separator: "\n"), screen: "", alreadyShown: [])
                 print("analyze: \(String(format: "%.1f", Date().timeIntervalSince(t1)))s")
                 for s in r.supplements { print("補足: \(s.term) — \(s.explanation)") }
                 for q in r.questions { print("質問: \(q)") }

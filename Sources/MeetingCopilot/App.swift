@@ -18,8 +18,9 @@ struct MeetingCopilotApp: App {
         WindowGroup("Meeting Copilot") {
             ContentView(model: model)
                 .frame(minWidth: 720, minHeight: 420)
+                // The window level is toggled at runtime (pin button), so it is set on NSWindow, not the Scene.
+                .onAppear { model.applyPin() }
         }
-        .windowLevel(.floating)
         .defaultSize(width: 900, height: 560)
     }
 }
